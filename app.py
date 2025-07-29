@@ -63,15 +63,15 @@ def docx_to_html(path):
 # --- Calculate components from moisture ---
 def calculate_components(moisture):
     remaining = 100 - moisture
-    gum = round(random.uniform(81, min(85, remaining - 1.5)), 2)
+    gum = round(random.uniform(81, min(88, remaining - 1.5)), 2)
     remaining -= gum
-    protein = round(min(5, remaining * 0.2), 2)
+    protein = round(min(4, remaining * 0.2), 2)
     remaining -= protein
-    ash = round(min(1, remaining * 0.2), 2)
+    ash = round(min(0.7, remaining * 0.2), 2)
     remaining -= ash
-    air = round(min(6, remaining * 0.5), 2)
+    air = round(min(3.5, remaining * 0.5), 2)
     remaining -= air
-    fat = round(remaining, 2)
+    fat = round(min(0.8, remaining), 2)
     return gum, protein, ash, air, fat
 
 # --- Streamlit UI ---
