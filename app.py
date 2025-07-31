@@ -62,17 +62,52 @@ def docx_to_html(path):
 
 # --- Calculate components from moisture ---
 def calculate_components(moisture):
-    remaining = 100 - moisture
+    total = 100
+    remaining = total - moisture
+
     gum = round(random.uniform(81, min(88, remaining - 1.5)), 2)
     remaining -= gum
-    protein = round(min(4, remaining * 0.2), 2)
-    remaining -= protein
-    ash = round(min(0.7, remaining * 0.2), 2)
-    remaining -= ash
-    air = round(min(3.5, remaining * 0.5), 2)
-    remaining -= air
-    fat = round(min(0.8, remaining), 2)
+
+    # Initial base values
+    base_protein = min(4, remaining * 0.2)
+    base_ash = min(0.7, remaining * 0.2)
+    base_air = min(3.5, remaining * 0.5)
+    base_fat = min(0.8, remaining)
+
+    base_total = base_protein + base_ash + base_air + base_fat
+
+    if round(base_total, 2) <= round(remaining, 2):
+        protein = round(base_protein, 2)
+        ash = round(base_ash, 2)
+        air = round(base_air, 2)
+        fat = round(remaining - (protein + ash + air), 2)
+        fat = min(fat, 0.8)
+
+        leftover = round(remaining - (protein + ash + air + fat), 2)
+        if leftover > 0 and (protein + ash + air) > 0:
+            scale = remaining / (protein + ash + air)
+            protein = round(protein * scale, 2)
+            ash = round(ash * scale, 2)
+            air = round(air * scale, 2)
+            fat = round(remaining - (protein + ash + air), 2)
+    else:
+        scale = remaining / base_total
+        protein = round(base_protein * scale, 2)
+        ash = round(base_ash * scale, 2)
+        air = round(base_air * scale, 2)
+        fat = round(base_fat * scale, 2)
+        fat = min(fat, 0.8)
+
+        subtotal = protein + ash + air + fat
+        if subtotal < remaining and (protein + ash + air) > 0:
+            extra = remaining - subtotal
+            protein += round(extra * (protein / (protein + ash + air)), 2)
+            ash += round(extra * (ash / (protein + ash + air)), 2)
+            air += round(extra * (air / (protein + ash + air)), 2)
+            fat = round(remaining - (protein + ash + air), 2)
+
     return gum, protein, ash, air, fat
+
 
 # --- Streamlit UI ---
 st.set_page_config("Bulk COA Generator", layout="wide")
