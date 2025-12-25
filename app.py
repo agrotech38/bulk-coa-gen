@@ -124,9 +124,8 @@ def generate_docx(data, template, out):
 # STREAMLIT UI
 # ---------------------------
 st.set_page_config("Bulk COA Generator", layout="wide")
-st.title("📦 Bulk COA Generator (Scientific Randomization)")
 
-uploaded_file = st.file_uploader("Upload Excel", type=["xlsx"])
+uploaded_file = st.file_uploader("Excel Upload Kijiye", type=["xlsx"])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
