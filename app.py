@@ -1,142 +1,154 @@
 import streamlit as st
 from docx import Document
-from docx.shared import RGBColor
-from datetime import datetime
-import calendar
+import mammoth
 import random
-import os
 import pandas as pd
 import io
-import mammoth
+import os
 import zipfile
+from datetime import datetime
+import calendar
 
-# --- Style-preserving text replacement ---
+# ---------------------------
+# Component Ranges (FROM FIRST CODE)
+# ---------------------------
+RANGES = {
+    "fat": (0.45, 0.55),
+    "air": (2.90, 3.10),
+    "ash": (0.45, 0.55),
+    "protein": (2.45, 2.55),
+    "gum": (80.10, 89.95)
+}
+
+MIDS = {k: (v[0] + v[1]) / 2 for k, v in RANGES.items()}
+
+# ---------------------------
+# Distribution Engine (WATER FILLING)
+# ---------------------------
+def distribute_within_bounds(target, names, mins, maxs, weights):
+    vals = {n: target * (weights[n] / sum(weights.values())) for n in names}
+    locked = {n: False for n in names}
+
+    for _ in range(100):
+        for n in names:
+            if not locked[n]:
+                if vals[n] < mins[n]:
+                    vals[n] = mins[n]
+                    locked[n] = True
+                if vals[n] > maxs[n]:
+                    vals[n] = maxs[n]
+                    locked[n] = True
+
+        unlocked = [n for n in names if not locked[n]]
+        if not unlocked:
+            break
+
+        remaining = target - sum(vals.values())
+        wsum = sum(weights[n] for n in unlocked)
+
+        for n in unlocked:
+            vals[n] += remaining * (weights[n] / wsum)
+
+    for n in names:
+        vals[n] = round(vals[n], 2)
+
+    diff = round(target - sum(vals.values()), 2)
+    for n in names:
+        if abs(diff) < 0.01:
+            break
+        low = RANGES[n][0]
+        high = RANGES[n][1]
+        if low <= vals[n] + diff <= high:
+            vals[n] += diff
+            break
+
+    return vals
+
+# ---------------------------
+# RANDOM COMPONENT ENGINE
+# ---------------------------
+def calculate_components_random(moisture):
+    remaining = round(100 - moisture, 4)
+    others = ["fat", "air", "ash", "protein"]
+    gum_min, gum_max = RANGES["gum"]
+
+    for _ in range(2000):
+        gum = round(random.uniform(gum_min, gum_max), 4)
+        left = remaining - gum
+
+        mins = {o: RANGES[o][0] for o in others}
+        maxs = {o: RANGES[o][1] for o in others}
+        weights = {o: random.random() + MIDS[o] for o in others}
+
+        try:
+            vals = distribute_within_bounds(left, others, mins, maxs, weights)
+            total = moisture + gum + sum(vals.values())
+            if abs(total - 100) <= 0.01:
+                return (
+                    round(gum, 2),
+                    vals["protein"],
+                    vals["ash"],
+                    vals["air"],
+                    vals["fat"],
+                )
+        except:
+            pass
+
+    raise ValueError("Cannot generate valid components")
+
+# ---------------------------
+# DOCX FUNCTIONS
+# ---------------------------
 def advanced_replace_text_preserving_style(doc, replacements):
     def replace_in_paragraph(paragraph):
-        runs = paragraph.runs
-        full_text = ''.join(run.text for run in runs)
-        for key, value in replacements.items():
-            placeholder = f"{{{{{key}}}}}"
-            if placeholder in full_text:
-                new_runs = []
-                accumulated = ""
-                for run in runs:
-                    accumulated += run.text
-                    new_runs.append(run)
-                    if placeholder in accumulated:
-                        style_run = next((r for r in new_runs if placeholder in r.text), new_runs[0])
-                        font = style_run.font
-                        accumulated = accumulated.replace(placeholder, value)
-                        for r in new_runs:
-                            r.text = ''
-                        if new_runs:
-                            new_run = new_runs[0]
-                            new_run.text = accumulated
-                            new_run.font.name = font.name
-                            new_run.font.size = font.size
-                            new_run.font.bold = font.bold
-                            new_run.font.italic = font.italic
-                            new_run.font.underline = font.underline
-                            new_run.font.color.rgb = font.color.rgb
-                        break
+        full = ''.join(r.text for r in paragraph.runs)
+        for k, v in replacements.items():
+            key = f"{{{{{k}}}}}"
+            if key in full:
+                paragraph.text = full.replace(key, v)
 
-    for para in doc.paragraphs:
-        replace_in_paragraph(para)
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
-                    replace_in_paragraph(para)
+    for p in doc.paragraphs:
+        replace_in_paragraph(p)
+    for t in doc.tables:
+        for r in t.rows:
+            for c in r.cells:
+                for p in c.paragraphs:
+                    replace_in_paragraph(p)
 
-# --- Generate DOCX file ---
-def generate_docx(data, template_path, output_path):
-    doc = Document(template_path)
+def generate_docx(data, template, out):
+    doc = Document(template)
     advanced_replace_text_preserving_style(doc, data)
-    doc.save(output_path)
+    doc.save(out)
 
-# --- Convert DOCX to HTML for preview ---
-def docx_to_html(path):
-    with open(path, "rb") as docx_file:
-        result = mammoth.convert_to_html(docx_file)
-        return result.value
-
-# --- Calculate components from moisture ---
-def calculate_components(moisture):
-    total = 100
-    remaining = total - moisture
-
-    gum = round(random.uniform(81, min(88, remaining - 1.5)), 2)
-    remaining -= gum
-
-    # Initial base values
-    base_protein = min(4, remaining * 0.2)
-    base_ash = min(0.7, remaining * 0.2)
-    base_air = min(3.5, remaining * 0.5)
-    base_fat = min(0.8, remaining)
-
-    base_total = base_protein + base_ash + base_air + base_fat
-
-    if round(base_total, 2) <= round(remaining, 2):
-        protein = round(base_protein, 2)
-        ash = round(base_ash, 2)
-        air = round(base_air, 2)
-        fat = round(remaining - (protein + ash + air), 2)
-        fat = min(fat, 0.8)
-
-        leftover = round(remaining - (protein + ash + air + fat), 2)
-        if leftover > 0 and (protein + ash + air) > 0:
-            scale = remaining / (protein + ash + air)
-            protein = round(protein * scale, 2)
-            ash = round(ash * scale, 2)
-            air = round(air * scale, 2)
-            fat = round(remaining - (protein + ash + air), 2)
-    else:
-        scale = remaining / base_total
-        protein = round(base_protein * scale, 2)
-        ash = round(base_ash * scale, 2)
-        air = round(base_air * scale, 2)
-        fat = round(base_fat * scale, 2)
-        fat = min(fat, 0.8)
-
-        subtotal = protein + ash + air + fat
-        if subtotal < remaining and (protein + ash + air) > 0:
-            extra = remaining - subtotal
-            protein += round(extra * (protein / (protein + ash + air)), 2)
-            ash += round(extra * (ash / (protein + ash + air)), 2)
-            air += round(extra * (air / (protein + ash + air)), 2)
-            fat = round(remaining - (protein + ash + air), 2)
-
-    return gum, protein, ash, air, fat
-
-
-# --- Streamlit UI ---
+# ---------------------------
+# STREAMLIT UI
+# ---------------------------
 st.set_page_config("Bulk COA Generator", layout="wide")
-st.title("📥 Bulk COA Generator from Excel")
+st.title("📦 Bulk COA Generator (Scientific Randomization)")
 
-uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+uploaded_file = st.file_uploader("Upload Excel", type=["xlsx"])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
-    st.success(f"✅ Uploaded {len(df)} row(s)")
+    st.success(f"Loaded {len(df)} rows")
 
-    coa_files = []
-    temp_dir = "generated_coas"
-    os.makedirs(temp_dir, exist_ok=True)
+    out_dir = "generated"
+    os.makedirs(out_dir, exist_ok=True)
+    files = []
 
-    for idx, row in df.iterrows():
+    for i, row in df.iterrows():
         try:
-            code = str(row["Code"]).strip()
-            date = str(row["Date"]).strip()
-            batch = str(row["Batch No"]).strip()
+            code = str(row["Code"])
+            date = str(row["Date"])
+            batch = str(row["Batch No"])
             moisture = float(row["Moisture"])
-            ph = str(row["pH"]).strip()
-            mesh = str(row["200 Mesh"]).strip()
-            vis2h = str(row["Viscosity 2H"]).strip()
-            vis24h = str(row["Viscosity 24H"]).strip()
+            ph = str(row["pH"])
+            mesh = str(row["200 Mesh"])
+            v2 = str(row["Viscosity 2H"])
+            v24 = str(row["Viscosity 24H"])
 
-            # Calculate Best Before
             try:
-                dt = datetime.strptime(date.strip(), "%B %Y")
+                dt = datetime.strptime(date, "%B %Y")
                 year = dt.year + 2
                 month = dt.month - 1
                 if month == 0:
@@ -146,56 +158,43 @@ if uploaded_file:
             except:
                 best_before = "N/A"
 
-            gum, protein, ash, air, fat = calculate_components(moisture)
+            gum, protein, ash, air, fat = calculate_components_random(moisture)
 
             data = {
                 "DATE": date,
                 "BATCH_NO": batch,
                 "BEST_BEFORE": best_before,
-                "MOISTURE": f"{moisture}%",
+                "MOISTURE": f"{moisture:.2f}%",
                 "PH": ph,
                 "MESH_200": f"{mesh}%",
-                "VISCOSITY_2H": vis2h,
-                "VISCOSITY_24H": vis24h,
-                "GUM_CONTENT": f"{gum}%",
-                "PROTEIN": f"{protein}%",
-                "ASH_CONTENT": f"{ash}%",
-                "AIR": f"{air}%",
-                "FAT": f"{fat}%"
+                "VISCOSITY_2H": v2,
+                "VISCOSITY_24H": v24,
+                "GUM_CONTENT": f"{gum:.2f}%",
+                "PROTEIN": f"{protein:.2f}%",
+                "ASH_CONTENT": f"{ash:.2f}%",
+                "AIR": f"{air:.2f}%",
+                "FAT": f"{fat:.2f}%"
             }
 
-            safe_batch = batch.replace("/", "_").replace("\\", "_").replace(" ", "_")
-            filename = f"COA-{safe_batch}-{code}.docx"
             template = f"COA {code}.docx"
-            output_path = os.path.join(temp_dir, filename)
+            safe = batch.replace("/", "_")
+            out = f"{out_dir}/COA-{safe}-{code}.docx"
 
             if os.path.exists(template):
-                generate_docx(data, template, output_path)
-                coa_files.append(output_path)
-                st.success(f"✅ Generated: {filename}")
+                generate_docx(data, template, out)
+                files.append(out)
+                st.success(f"Generated {os.path.basename(out)}")
             else:
-                st.warning(f"⚠️ Missing template: COA {code}.docx (skipped row {idx+1})")
+                st.error(f"Missing template: {template}")
 
         except Exception as e:
-            st.error(f"❌ Error processing row {idx+1}: {str(e)}")
+            st.error(f"Row {i+1} failed: {e}")
 
-    if coa_files:
-        st.subheader("📄 Download Generated COAs")
+    if files:
+        zip_path = f"{out_dir}/ALL_COA.zip"
+        with zipfile.ZipFile(zip_path, "w") as z:
+            for f in files:
+                z.write(f, os.path.basename(f))
 
-        for path in coa_files:
-            with open(path, "rb") as f:
-                st.download_button(
-                    label=f"⬇️ Download {os.path.basename(path)}",
-                    data=f,
-                    file_name=os.path.basename(path),
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
-
-        # ZIP all files
-        zip_path = os.path.join(temp_dir, "All_COAs.zip")
-        with zipfile.ZipFile(zip_path, "w") as zipf:
-            for f in coa_files:
-                zipf.write(f, arcname=os.path.basename(f))
-
-        with open(zip_path, "rb") as z:
-            st.download_button("📦 Download All as ZIP", z, file_name="All_COAs.zip")
+        with open(zip_path, "rb") as f:
+            st.download_button("📦 Download All COAs", f, file_name="ALL_COA.zip")
