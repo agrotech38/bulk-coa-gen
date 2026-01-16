@@ -10,7 +10,7 @@ from datetime import datetime
 import calendar
 
 # ---------------------------
-# Component Ranges (FROM FIRST CODE)
+# Component Ranges
 # ---------------------------
 RANGES = {
     "fat": (0.45, 0.55),
@@ -23,7 +23,7 @@ RANGES = {
 MIDS = {k: (v[0] + v[1]) / 2 for k, v in RANGES.items()}
 
 # ---------------------------
-# Distribution Engine (WATER FILLING)
+# Distribution Engine
 # ---------------------------
 def distribute_within_bounds(target, names, mins, maxs, weights):
     vals = {n: target * (weights[n] / sum(weights.values())) for n in names}
@@ -56,8 +56,7 @@ def distribute_within_bounds(target, names, mins, maxs, weights):
     for n in names:
         if abs(diff) < 0.01:
             break
-        low = RANGES[n][0]
-        high = RANGES[n][1]
+        low, high = RANGES[n]
         if low <= vals[n] + diff <= high:
             vals[n] += diff
             break
@@ -149,9 +148,8 @@ if uploaded_file:
             try:
                 dt = datetime.strptime(date, "%B %Y")
                 year = dt.year + 2
-                month = dt.month - 1
-                if month == 0:
-                    month = 12
+                month = dt.month - 1 or 12
+                if month == 12:
                     year -= 1
                 best_before = f"{calendar.month_name[month].upper()} {year}"
             except:
@@ -176,8 +174,10 @@ if uploaded_file:
             }
 
             template = f"COA {code}.docx"
-            safe = batch.replace("/", "_")
-            out = f"{out_dir}/COA-{safe}-{code}.docx"
+
+            # ✅ FINAL RENAMING SYSTEM
+            safe_batch = batch.replace("/", "-").replace("\\", "-")
+            out = f"{out_dir}/COA {safe_batch} {code}.docx"
 
             if os.path.exists(template):
                 generate_docx(data, template, out)
